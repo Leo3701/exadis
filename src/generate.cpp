@@ -131,22 +131,54 @@ void insert_prismatic_loop(Crystal& crystal, SerialDisNet *network, Vec3 burg,
                            double radius, Vec3 center, double maxseg)
 {
     int Nsides;
-    Vec3 e[12], n[12];
+    Vec3 e[24], n[24];
     
     if (crystal.type == BCC_CRYSTAL) {
         burg = -1.0*burg;
-        Nsides = 6;
-        e[0] = Vec3(-2.0*burg.x, burg.y, burg.z);
-        e[2] = Vec3(burg.x, -2.0*burg.y, burg.z);
-        e[4] = Vec3(burg.x, burg.y, -2.0*burg.z);
-        e[1] = -1.0*e[4];
-        e[3] = -1.0*e[0];
-        e[5] = -1.0*e[2];
-        
-        for (int i = 0; i < 6; i++)
-            n[i] = cross(burg, e[(i+1)%Nsides]-e[i]).normalized();
-        for (int i = 0; i < 6; i++)
-            e[i] = crystal.R * e[i].normalized();
+        int bid = crystal.identify_closest_Burgers_index(crystal.R * burg);
+        bool strict = (crystal.bcc_plane_family_mask >= 0 ||
+                       crystal.num_bcc_plane_families == 4 ||
+                       crystal.num_bcc_plane_families == 5);
+        int numplanes = strict ? crystal.planes_per_burg(bid) : 3;
+        if (numplanes > 12)
+            ExaDiS_fatal("Error: too many BCC glide planes (%d) for prismatic-loop construction\n", numplanes);
+
+        Vec3 edge[24], edgeplane[24];
+        int start = crystal.burg_start_plane(bid);
+        for (int i = 0; i < numplanes; i++) {
+            Vec3 p = crystal.ref_planes(start+i);
+            Vec3 t = cross(p, burg).normalized();
+            edge[i] = t;
+            edgeplane[i] = p;
+            edge[numplanes+i] = -1.0*t;
+            edgeplane[numplanes+i] = p;
+        }
+        Nsides = 2*numplanes;
+
+        Vec3 u = edge[0];
+        Vec3 v = cross(burg.normalized(), u).normalized();
+        std::vector<int> order(Nsides);
+        for (int i = 0; i < Nsides; i++) order[i] = i;
+        std::sort(order.begin(), order.end(), [&](int i, int j) {
+            double ai = atan2(dot(edge[i], v), dot(edge[i], u));
+            double aj = atan2(dot(edge[j], v), dot(edge[j], u));
+            return ai < aj;
+        });
+
+        e[0] = Vec3(0.0);
+        for (int i = 1; i < Nsides; i++)
+            e[i] = e[i-1] + edge[order[i-1]];
+
+        Vec3 centroid(0.0);
+        for (int i = 0; i < Nsides; i++) centroid += e[i];
+        centroid = (1.0/Nsides)*centroid;
+        double rmax = 0.0;
+        for (int i = 0; i < Nsides; i++)
+            rmax = MAX(rmax, (e[i]-centroid).norm());
+        for (int i = 0; i < Nsides; i++) {
+            e[i] = crystal.R * ((1.0/rmax)*(e[i]-centroid));
+            n[i] = edgeplane[order[i]];
+        }
         
     } else if (crystal.type == FCC_CRYSTAL) {
         Nsides = 4;

@@ -23,6 +23,12 @@ namespace ExaDiS {
 
 enum CrystalType {BCC_CRYSTAL, FCC_CRYSTAL, USER_CRYSTAL};
 
+enum BCCPlaneFamilyMask {
+    BCC_PLANE_FAMILY_110 = 1,
+    BCC_PLANE_FAMILY_112 = 2,
+    BCC_PLANE_FAMILY_123 = 4
+};
+
 /*---------------------------------------------------------------------------
  *
  *    Struct:       CrystalParams
@@ -31,7 +37,8 @@ enum CrystalType {BCC_CRYSTAL, FCC_CRYSTAL, USER_CRYSTAL};
 struct CrystalParams
 {
     int type = -1; // crystal type
-    int num_bcc_plane_families = -1; // number of plane families for BCC
+    int num_bcc_plane_families = -1; // BCC selector: 1-3 cumulative, 4={112} only, 5={123} only
+    int bcc_plane_family_mask = -1; // strict BCC family mask: {110}=1, {112}=2, {123}=4
     Mat33 R = Mat33().eye(); // crystal orientation
     int use_glide_planes = -1;
     int enforce_glide_planes = -1;
@@ -85,7 +92,8 @@ struct Crystal : CrystalParams
         if (type != p.type || R != p.R ||
             (p.use_glide_planes != -1 && use_glide_planes != p.use_glide_planes) ||
             (p.enforce_glide_planes != -1 && enforce_glide_planes != p.enforce_glide_planes) ||
-            (p.num_bcc_plane_families != -1 && num_bcc_plane_families != p.num_bcc_plane_families))
+            (p.num_bcc_plane_families != -1 && num_bcc_plane_families != p.num_bcc_plane_families) ||
+            (p.bcc_plane_family_mask != -1 && bcc_plane_family_mask != p.bcc_plane_family_mask))
             return 1;
         return 0;
     }
@@ -130,7 +138,22 @@ struct Crystal : CrystalParams
         
         if (type < BCC_CRYSTAL || type > USER_CRYSTAL)
             ExaDiS_fatal("Error: invalid crystal type %d\n", type);
+
+        if (type == BCC_CRYSTAL && bcc_plane_family_mask >= 0 &&
+            num_bcc_plane_families >= 0)
+            ExaDiS_fatal("Error: specify either bcc_plane_family_mask or num_bcc_plane_families, not both\n");
         
+        bool strict_bcc_planes = (type == BCC_CRYSTAL &&
+                                  (bcc_plane_family_mask >= 0 ||
+                                   num_bcc_plane_families == 4 ||
+                                   num_bcc_plane_families == 5));
+        if (strict_bcc_planes && (use_glide_planes == 0 || enforce_glide_planes == 0))
+            ExaDiS_fatal("Error: strict BCC plane-family selection requires use_glide_planes = 1 and enforce_glide_planes = 1\n");
+        if (strict_bcc_planes) {
+            use_glide_planes = 1;
+            enforce_glide_planes = 1;
+        }
+
         if (use_glide_planes < 0)
             use_glide_planes = (type == BCC_CRYSTAL) ? 0 : 1;
         if (enforce_glide_planes < 0)
@@ -155,13 +178,34 @@ struct Crystal : CrystalParams
             ref_burgs(5) = 2.0/sqrt(3.0) * Vec3(0.0, 1.0, 0.0);
             ref_burgs(6) = 2.0/sqrt(3.0) * Vec3(0.0, 0.0, 1.0);
             
-            // Habit planes
-            if (num_bcc_plane_families <= 0)
-                num_bcc_plane_families = 2; // default
-            int num_glissile_planes;
-            if (num_bcc_plane_families == 1) num_glissile_planes = 3; // only {110} planes
-            else if (num_bcc_plane_families == 2) num_glissile_planes = 3+3; // {110} and {112} planes
-            else num_glissile_planes = 3+3+6; // {110}, {112}, and {123} planes
+            // Habit planes. A mask or selector 4/5 enables a strict whitelist;
+            // selectors 1-3 preserve the original cumulative behavior.
+            bool strict_plane_families = strict_bcc_planes;
+            bool use_110, use_112, use_123;
+            if (strict_plane_families) {
+                if (bcc_plane_family_mask >= 0) {
+                    if (bcc_plane_family_mask == 0 || (bcc_plane_family_mask & ~7))
+                        ExaDiS_fatal("Error: invalid BCC plane family mask %d (valid bits: {110}=1, {112}=2, {123}=4)\n",
+                                     bcc_plane_family_mask);
+                    use_110 = bcc_plane_family_mask & BCC_PLANE_FAMILY_110;
+                    use_112 = bcc_plane_family_mask & BCC_PLANE_FAMILY_112;
+                    use_123 = bcc_plane_family_mask & BCC_PLANE_FAMILY_123;
+                } else {
+                    use_110 = false;
+                    use_112 = (num_bcc_plane_families == 4);
+                    use_123 = (num_bcc_plane_families == 5);
+                }
+            } else {
+                if (num_bcc_plane_families <= 0)
+                    num_bcc_plane_families = 2; // default
+                if (num_bcc_plane_families > 3)
+                    ExaDiS_fatal("Error: invalid num_bcc_plane_families %d (valid values: 1-5)\n",
+                                 num_bcc_plane_families);
+                use_110 = true;
+                use_112 = (num_bcc_plane_families >= 2);
+                use_123 = (num_bcc_plane_families >= 3);
+            }
+            int num_glissile_planes = 3*use_110 + 3*use_112 + 6*use_123;
             
             num_planes = 4*num_glissile_planes+3*16;
             Kokkos::resize(ref_planes, num_planes);
@@ -171,24 +215,27 @@ struct Crystal : CrystalParams
             // 1/2<111> Burgers
             for (int i = 0; i < 4; i++) {
                 Vec3 b = ref_burgs(i);
-                // {110} planes
-                ref_planes(i*num_glissile_planes+0) = Vec3(-1.0*b.x, b.y, 0.0).normalized();
-                ref_planes(i*num_glissile_planes+1) = Vec3(0.0, -1.0*b.y, b.z).normalized();
-                ref_planes(i*num_glissile_planes+2) = Vec3(b.x, 0.0, -1.0*b.z).normalized();
-                if (num_glissile_planes > 3) {
-                    // {112} planes
-                    ref_planes(i*num_glissile_planes+3) = Vec3(-2.0*b.x, b.y, b.z).normalized();
-                    ref_planes(i*num_glissile_planes+4) = Vec3(b.x, -2.0*b.y, b.z).normalized();
-                    ref_planes(i*num_glissile_planes+5) = Vec3(b.x, b.y, -2.0*b.z).normalized();
+                int p = i*num_glissile_planes;
+                if (use_110) {
+                    // {110} planes
+                    ref_planes(p++) = Vec3(-1.0*b.x, b.y, 0.0).normalized();
+                    ref_planes(p++) = Vec3(0.0, -1.0*b.y, b.z).normalized();
+                    ref_planes(p++) = Vec3(b.x, 0.0, -1.0*b.z).normalized();
                 }
-                if (num_glissile_planes > 6) {
+                if (use_112) {
+                    // {112} planes
+                    ref_planes(p++) = Vec3(-2.0*b.x, b.y, b.z).normalized();
+                    ref_planes(p++) = Vec3(b.x, -2.0*b.y, b.z).normalized();
+                    ref_planes(p++) = Vec3(b.x, b.y, -2.0*b.z).normalized();
+                }
+                if (use_123) {
                     // {123} planes
-                    ref_planes(i*num_glissile_planes+6)  = Vec3(-3.0*b.x, 2.0*b.y, b.z).normalized();
-                    ref_planes(i*num_glissile_planes+7)  = Vec3(-3.0*b.x, b.y, 2.0*b.z).normalized();
-                    ref_planes(i*num_glissile_planes+8)  = Vec3(2.0*b.x, -3.0*b.y, b.z).normalized();
-                    ref_planes(i*num_glissile_planes+9)  = Vec3(b.x, -3.0*b.y, 2.0*b.z).normalized();
-                    ref_planes(i*num_glissile_planes+10) = Vec3(2.0*b.x, b.y, -3.0*b.z).normalized();
-                    ref_planes(i*num_glissile_planes+11) = Vec3(b.x, 2.0*b.y, -3.0*b.z).normalized();
+                    ref_planes(p++) = Vec3(-3.0*b.x, 2.0*b.y, b.z).normalized();
+                    ref_planes(p++) = Vec3(-3.0*b.x, b.y, 2.0*b.z).normalized();
+                    ref_planes(p++) = Vec3(2.0*b.x, -3.0*b.y, b.z).normalized();
+                    ref_planes(p++) = Vec3(b.x, -3.0*b.y, 2.0*b.z).normalized();
+                    ref_planes(p++) = Vec3(2.0*b.x, b.y, -3.0*b.z).normalized();
+                    ref_planes(p++) = Vec3(b.x, 2.0*b.y, -3.0*b.z).normalized();
                 }
                 // Indexing
                 planes_per_burg(i) = num_glissile_planes;
@@ -219,14 +266,16 @@ struct Crystal : CrystalParams
                 }
             }
             
-            // Slip systems: only register the 1/2<111>{110} systems for now
-            // For BCC this is only used in network generatation functions
-            num_sys = 12;
+            // In strict mode register every whitelisted system so network
+            // generators cannot seed a disabled family. Preserve the legacy
+            // {110}-only generator behavior when the mask is not specified.
+            int num_registered_planes = strict_plane_families ? num_glissile_planes : 3;
+            num_sys = 4*num_registered_planes;
             Kokkos::resize(ref_sys, num_sys, 2);
             for (int i = 0; i < 4; i++) {
-                for (int j = 0; j < 3; j++) {
-                    ref_sys(i*3+j,0) = i; // Burgers index
-                    ref_sys(i*3+j,1) = burg_start_plane(i)+j; // Plane index
+                for (int j = 0; j < num_registered_planes; j++) {
+                    ref_sys(i*num_registered_planes+j,0) = i; // Burgers index
+                    ref_sys(i*num_registered_planes+j,1) = burg_start_plane(i)+j; // Plane index
                 }
             }
             
@@ -355,6 +404,26 @@ struct Crystal : CrystalParams
             }
         }
         return bid;
+    }
+
+    template<class N>
+    KOKKOS_INLINE_FUNCTION
+    int get_bcc_screw_glide_directions(const Vec3& b, Vec3* directions,
+                                       int max_directions)
+    {
+        int bid = identify_closest_Burgers_index(b);
+        // Preserve legacy cross-slip behavior ({110} only) unless the strict
+        // family mask is explicitly enabled.
+        bool strict = (bcc_plane_family_mask >= 0 ||
+                       num_bcc_plane_families == 4 ||
+                       num_bcc_plane_families == 5);
+        int count = strict ? planes_per_burg(bid) : 3;
+        if (count > max_directions) count = max_directions;
+        Vec3 b_crystal = ref_burgs(bid).normalized();
+        int start = burg_start_plane(bid);
+        for (int i = 0; i < count; i++)
+            directions[i] = cross(ref_planes(start+i), b_crystal).normalized();
+        return count;
     }
     
     KOKKOS_INLINE_FUNCTION

@@ -877,7 +877,10 @@ PYBIND11_MODULE(pyexadis, m) {
         .def_readwrite("R", &CrystalParams::R, "Crystal orientation matrix")
         .def_readwrite("use_glide_planes", &CrystalParams::use_glide_planes, "Use and maintain dislocation glide planes")
         .def_readwrite("enforce_glide_planes", &CrystalParams::enforce_glide_planes, "Enforce glide planes option")
-        .def_readwrite("num_bcc_plane_families", &CrystalParams::num_bcc_plane_families, "Number of BCC plane families (1, 2, or 3)");
+        .def_readwrite("num_bcc_plane_families", &CrystalParams::num_bcc_plane_families,
+                       "BCC plane selector (1={110}, 2={110}+{112}, 3=all, 4={112} only, 5={123} only)")
+        .def_readwrite("bcc_plane_family_mask", &CrystalParams::bcc_plane_family_mask,
+                       "Strict BCC plane-family mask ({110}=1, {112}=2, {123}=4)");
     
     py::class_<Crystal, CrystalParams>(m, "Crystal")
         .def(py::init<int>(), py::arg("type"))

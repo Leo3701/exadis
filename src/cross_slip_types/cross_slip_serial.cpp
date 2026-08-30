@@ -169,7 +169,7 @@ void CrossSlipSerial::handle(System* system)
             double fnodeThreshold = noiseFactor * shearModulus * burgSize * 
                                     0.5 * (L1 + L2);
             
-            Mat33 glideDirCrystal = Mat33().zero();
+            Vec3 glideDirCrystal[12];
             int numGlideDir = 0; // Number of cross-slip glide directions
             
             if (system->crystal.type == FCC_CRYSTAL) {
@@ -197,19 +197,13 @@ void CrossSlipSerial::handle(System* system)
                 glideDirCrystal[1] = sqrt(1.0/6.0) * glideDirCrystal[1];
                 
             } else if (system->crystal.type == BCC_CRYSTAL) {
-                // Find which glide planes the segments are on. Initial
-                // glidedir array contains glide directions in crystal frame
-                // For BCC geometry burgCrystal should be of <1 1 1> type
-                numGlideDir = 3;
-                Mat33 tmp33 = outer(burgCrystal, burgCrystal);
-                for (int m = 0; m < 3; m++)
-                    for (int n = 0; n < 3; n++)
-                        glideDirCrystal[m][n] = ((m==n)-tmp33[m][n]) * sqrt(1.5);
-
-                // glideDirCrystal should now contain the three <112> type
-                // directions that a screw dislocation may move in if glide
-                // is restricted to <110> type glide planes
+                // Build candidates from the active crystal-plane whitelist.
+                // This supports 3 {110}, 3 {112}, or 6 {123} planes.
+                numGlideDir = system->crystal.get_bcc_screw_glide_directions<SerialDisNet>(
+                    burg, glideDirCrystal, 12);
             }
+
+            if (numGlideDir == 0) continue;
             
             int s1 = network->conn[i].seg[0];
             int s2 = network->conn[i].seg[1];
@@ -217,16 +211,19 @@ void CrossSlipSerial::handle(System* system)
             Vec3 segplane2 = network->segs[s2].plane;
             
             // Rotations
-            Mat33 glideDirLab;
-            for (int j = 0; j < 3; j++)
+            Vec3 glideDirLab[12];
+            for (int j = 0; j < numGlideDir; j++)
                 glideDirLab[j] = system->crystal.R * glideDirCrystal[j];
             segplane1 = system->crystal.Rinv * segplane1;
             segplane2 = system->crystal.Rinv * segplane2;
             Vec3 fCrystal = system->crystal.Rinv * fLab;
             
-            Vec3 tmp3  = glideDirCrystal * segplane1;
-            Vec3 tmp3B = glideDirCrystal * segplane2;
-            Vec3 tmp3C = glideDirCrystal * fCrystal;
+            double tmp3[12], tmp3B[12], tmp3C[12];
+            for (int j = 0; j < numGlideDir; j++) {
+                tmp3[j] = dot(glideDirCrystal[j], segplane1);
+                tmp3B[j] = dot(glideDirCrystal[j], segplane2);
+                tmp3C[j] = dot(glideDirCrystal[j], fCrystal);
+            }
             
             // For FCC there are only two slip planes for screw dislocation
             int plane1 = 0;

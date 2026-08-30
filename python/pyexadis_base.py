@@ -82,10 +82,12 @@ class ExaDisNet(DisNet_Base):
     def write_data(self, datafile):
         self.net.write_data(datafile)
         
-    def generate_prismatic_config(self, crystal, Lbox, num_loops, radius, maxseg=-1, Rorient=None, seed=1234, uniform=False):
+    def generate_prismatic_config(self, crystal, Lbox, num_loops, radius, maxseg=-1,
+                                  Rorient=None, seed=1234, uniform=False, plane_family=None):
         from pyexadis_utils import generate_prismatic_config
         G = generate_prismatic_config(crystal, Lbox, num_loops, radius, maxseg=maxseg,
-                                      Rorient=Rorient, seed=seed, uniform=uniform)
+                                      Rorient=Rorient, seed=seed, uniform=uniform,
+                                      plane_family=plane_family)
         self.net = G.net
         return self
         
@@ -178,7 +180,28 @@ def get_exadis_params(state):
     if "Rorient" in state: params.crystalparams.R = state["Rorient"]
     if "use_glide_planes" in state: params.crystalparams.use_glide_planes = state["use_glide_planes"]
     if "enforce_glide_planes" in state: params.crystalparams.enforce_glide_planes = state["enforce_glide_planes"]
+    strict_bcc_keys = {"bcc_plane_family_mask", "bcc_plane_families"}.intersection(state)
+    if "num_bcc_plane_families" in state and strict_bcc_keys:
+        raise ValueError("Do not combine num_bcc_plane_families with another BCC plane-family selector")
     if "num_bcc_plane_families" in state: params.crystalparams.num_bcc_plane_families = state["num_bcc_plane_families"]
+    if "bcc_plane_family_mask" in state and "bcc_plane_families" in state:
+        raise ValueError("Specify only one of bcc_plane_family_mask and bcc_plane_families")
+    if "bcc_plane_family_mask" in state:
+        params.crystalparams.bcc_plane_family_mask = int(state["bcc_plane_family_mask"])
+    if "bcc_plane_families" in state:
+        families = state["bcc_plane_families"]
+        if isinstance(families, (str, int)):
+            families = [families]
+        family_bits = {"110": 1, "112": 2, "123": 4, "all": 7}
+        mask = 0
+        for family in families:
+            key = str(family).strip().replace("{", "").replace("}", "")
+            if key not in family_bits:
+                raise ValueError("Unknown BCC plane family %r; expected 110, 112, or 123" % family)
+            mask |= family_bits[key]
+        if mask == 0:
+            raise ValueError("bcc_plane_families must contain at least one family")
+        params.crystalparams.bcc_plane_family_mask = mask
     if "rann" in state: params.rann = state["rann"]
     if "rtol" in state: params.rtol = state["rtol"]
     if "maxdt" in state: params.maxdt = state["maxdt"]

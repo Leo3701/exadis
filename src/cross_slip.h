@@ -62,7 +62,7 @@ public:
 template<class N>
 KOKKOS_INLINE_FUNCTION
 bool node_pinned(System* system, N* net, int i, int planeIndex,
-                 const Mat33& glidedir, int numglidedir)
+                 const Vec3* glidedir, int numglidedir)
 {
     auto nodes = net->get_nodes();
     auto segs = net->get_segs();

@@ -206,6 +206,7 @@ def main():
         ("Test_Kokkos_Unified_Memory", [f"{build_path}/tests/test_kokkos", "test_unified_memory"], ["test_unified_memory()\n PASS"], None),
         ("Test_System", [f"{build_path}/tests/test_system", "test_system"], ["test_system()\n PASS"], None),
         ("Test_System_Unified", [f"{build_path}/tests/test_system", "test_system_unified"], ["test_system_unified()\n PASS"], None),
+        ("Test_BCC_Plane_Families", [f"{build_path}/tests/test_system", "test_bcc_plane_families"], ["test_bcc_plane_families()\n PASS"], None),
         ("Test_Exadis", [f"{build_path}/tests/test_exadis"], CheckRunStep(100), None),
         
         ("Test_Pyexadis_Import", [sys.executable, "test_pyexadis.py", "test_import"], ["pass"], None),
